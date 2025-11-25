@@ -108,6 +108,7 @@ class mcp2515 : public canbus
     int m_clockspeed;
     int m_cspin;
     int m_intpin;
+    bool m_hw_cs;
     uint8_t m_last_errflag = 0;
     uint8_t m_canctrl_mode;
     OvmsMutex m_write_mutex;

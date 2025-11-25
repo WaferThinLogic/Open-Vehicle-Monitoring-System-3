@@ -48,11 +48,10 @@ class spi : public pcp, public InternalRamAllocated
     virtual ~spi();
 
   public:
-    bool LockBus(TickType_t delay = portMAX_DELAY);
+    bool LockBus(TickType_t delay);
     void UnlockBus();
-    //CSW uint8_t* spi_cmd(spi_nodma_device_handle_t spi, uint8_t* buf, int rxlen, int txlen, ...);
     uint8_t* spi_cmd(spi_device_handle_t spi, uint8_t* buf, int rxlen, int txlen, ...);
-    //CSW esp_err_t spi_deselect(spi_nodma_device_handle_t spi);
+    uint8_t* spi_cmd_sw(spi_device_handle_t spi, int cspin, uint8_t* buf, int rxlen, int txlen, ...);
 
   public:
     //CSWspi_nodma_bus_config_t m_buscfg;

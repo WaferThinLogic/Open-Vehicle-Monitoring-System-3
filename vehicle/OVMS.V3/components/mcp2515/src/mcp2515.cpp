@@ -39,6 +39,8 @@ static const char *TAG = "mcp2515";
 #include "esp_intr_alloc.h"
 #include "soc/dport_reg.h"
 
+#define SPI_CMD(...) (m_hw_cs ? m_spibus->spi_cmd(m_spi, __VA_ARGS__) : m_spibus->spi_cmd_sw(m_spi, m_cspin, __VA_ARGS__))
+
 static IRAM_ATTR void MCP2515_isr(void *pvParameters)
   {
   mcp2515 *me = (mcp2515*)pvParameters;
@@ -69,6 +71,7 @@ mcp2515::mcp2515(const char* name, spi* spibus, spi_host_device_t host, int cloc
   m_clockspeed = clockspeed;
   m_cspin = cspin;
   m_intpin = intpin;
+  m_hw_cs = hw_cs;
 
   memset(&m_devcfg, 0, sizeof(spi_device_interface_config_t));
   m_devcfg.clock_speed_hz=m_clockspeed;     // Clock speed (in hz)
@@ -76,14 +79,17 @@ mcp2515::mcp2515(const char* name, spi* spibus, spi_host_device_t host, int cloc
   m_devcfg.command_bits=0;
   m_devcfg.address_bits=0;
   m_devcfg.dummy_bits=0;
-  //if (hw_cs)
+  if (m_hw_cs)
+    {
     m_devcfg.spics_io_num=m_cspin;
-  //else
-  //  {
+    }
+  else
+    {
     // use software CS for this mcp2515
-  //  m_devcfg.spics_io_num=-1;
-  //  m_devcfg.spics_ext_io_num=m_cspin;
-  //  }
+    m_devcfg.spics_io_num=-1;
+    gpio_set_direction((gpio_num_t)m_cspin, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)m_cspin, 1);
+    }
   m_devcfg.queue_size=7;                    // We want to be able to queue 7 transactions at a time
 
 /********* Use the SPI object to determine if the SPI bus has been initialized *************/
@@ -130,7 +136,7 @@ mcp2515::~mcp2515()
 esp_err_t mcp2515::WriteReg( uint8_t reg, uint8_t value )
   {
   uint8_t buf[16];
-  m_spibus->spi_cmd(m_spi, buf, 0, 3, CMD_WRITE, reg, value);
+  SPI_CMD( buf, 0, 3, CMD_WRITE, reg, value);
   return ESP_OK;
   }
 
@@ -140,7 +146,7 @@ esp_err_t mcp2515::WriteRegAndVerify( uint8_t reg, uint8_t value, uint8_t read_b
   uint8_t * rcvbuf;
   uint16_t timeout = 0;
 
-  rcvbuf = m_spibus->spi_cmd(m_spi, buf, 1, 2, CMD_READ, reg);
+  rcvbuf = SPI_CMD( buf, 1, 2, CMD_READ, reg);
   uint8_t origval = rcvbuf[0];
   ESP_LOGD(TAG, "%s: Set register (0x%02x val 0x%02x->0x%02x)", this->GetName(), reg, origval, value);
 
@@ -151,7 +157,7 @@ esp_err_t mcp2515::WriteRegAndVerify( uint8_t reg, uint8_t value, uint8_t read_b
     {
     vTaskDelay(10 / portTICK_PERIOD_MS);
 
-    rcvbuf = m_spibus->spi_cmd(m_spi, buf, 1, 2, CMD_READ, reg);
+    rcvbuf = SPI_CMD( buf, 1, 2, CMD_READ, reg);
     rcvbuf[0] &= read_back_mask; // we check for consistency only these bits (we couldn't change some read-only bits)
     ESP_LOGD(TAG, "%s:  - read register (0x%02x : 0x%02x)", this->GetName(), reg, rcvbuf[0]);
     timeout += 10;
@@ -181,7 +187,7 @@ esp_err_t mcp2515::Start(CAN_mode_t mode, CAN_speed_t speed)
   m_speed = speed;
 
   // RESET commmand
-  m_spibus->spi_cmd(m_spi, buf, 0, 1, CMD_RESET);
+  SPI_CMD( buf, 0, 1, CMD_RESET);
   vTaskDelay(50 / portTICK_PERIOD_MS);
 
   // CANINTE (interrupt enable), disable all interrupts during configuration
@@ -243,7 +249,7 @@ esp_err_t mcp2515::Start(CAN_mode_t mode, CAN_speed_t speed)
       cnf1=0x00; cnf2=0xca; cnf3=0x81;
       break;
     }
-  m_spibus->spi_cmd(m_spi, buf, 0, 5, CMD_WRITE, REG_CNF3, cnf3, cnf2, cnf1);
+  SPI_CMD( buf, 0, 5, CMD_WRITE, REG_CNF3, cnf3, cnf2, cnf1);
 
   // Active/Listen Mode
   uint8_t ret;
@@ -255,10 +261,10 @@ esp_err_t mcp2515::Start(CAN_mode_t mode, CAN_speed_t speed)
       return ESP_FAIL;
 
   // Clear abort transmisions & one-shot mode:
-  m_spibus->spi_cmd(m_spi, buf, 0, 4, CMD_BITMODIFY, REG_CANCTRL, CANCTRL_OSM | CANCTRL_ABAT, 0);
+  SPI_CMD( buf, 0, 4, CMD_BITMODIFY, REG_CANCTRL, CANCTRL_OSM | CANCTRL_ABAT, 0);
 
   // finally verify configuration registers
-  uint8_t * rcvbuf = m_spibus->spi_cmd(m_spi, buf, 3, 2, CMD_READ, REG_CNF3);
+  uint8_t * rcvbuf = SPI_CMD( buf, 3, 2, CMD_READ, REG_CNF3);
   if ( (cnf1!=rcvbuf[2]) or (cnf2!=rcvbuf[1]) or (cnf3!=rcvbuf[0]) )
     {
     ESP_LOGE(TAG, "%s: could not change configuration registers! (read CNF 0x%02x 0x%02x 0x%02x)", this->GetName(),
@@ -284,14 +290,14 @@ esp_err_t mcp2515::ChangeMode( uint8_t mode )
 
   ESP_LOGD(TAG, "%s: Change op mode to 0x%02x", this->GetName(), mode);
 
-  m_spibus->spi_cmd(m_spi, buf, 0, 4, CMD_BITMODIFY, REG_CANCTRL, CANCTRL_MODE, mode);
+  SPI_CMD( buf, 0, 4, CMD_BITMODIFY, REG_CANCTRL, CANCTRL_MODE, mode);
 
   // verify that mode is changed by polling CANSTAT register
   do
     {
     vTaskDelay(20 / portTICK_PERIOD_MS);
 
-    rcvbuf = m_spibus->spi_cmd(m_spi, buf, 1, 2, CMD_READ, REG_CANSTAT);
+    rcvbuf = SPI_CMD( buf, 1, 2, CMD_READ, REG_CANSTAT);
     ESP_LOGD(TAG, "%s:  read CANSTAT register (0x%02x : 0x%02x)", this->GetName(), REG_CANSTAT, rcvbuf[0]);
     timeout += 20;
 
@@ -315,7 +321,7 @@ esp_err_t mcp2515::Stop()
   uint8_t buf[16];
 
   // RESET command
-  m_spibus->spi_cmd(m_spi, buf, 0, 1, CMD_RESET);
+  SPI_CMD( buf, 0, 1, CMD_RESET);
   vTaskDelay(50 / portTICK_PERIOD_MS);
 
   SetTransceiverMode(CAN_MODE_LISTEN);
@@ -364,19 +370,19 @@ esp_err_t mcp2515::SetAcceptanceFilter(const mcp2515_filter_config_t& cfg)
     }
 
   // Write filters 0-2:
-  m_spibus->spi_cmd(m_spi, buf, 0, 14, CMD_WRITE, REG_RXF0SIDH,
+  SPI_CMD( buf, 0, 14, CMD_WRITE, REG_RXF0SIDH,
     cfg.filter[0].u8[3], cfg.filter[0].u8[2], cfg.filter[0].u8[1],cfg.filter[0].u8[0],
     cfg.filter[1].u8[3], cfg.filter[1].u8[2], cfg.filter[1].u8[1],cfg.filter[1].u8[0],
     cfg.filter[2].u8[3], cfg.filter[2].u8[2], cfg.filter[2].u8[1],cfg.filter[2].u8[0]);
 
   // Write filters 3-5:
-  m_spibus->spi_cmd(m_spi, buf, 0, 14, CMD_WRITE, REG_RXF3SIDH,
+  SPI_CMD( buf, 0, 14, CMD_WRITE, REG_RXF3SIDH,
     cfg.filter[3].u8[3], cfg.filter[3].u8[2], cfg.filter[3].u8[1],cfg.filter[3].u8[0],
     cfg.filter[4].u8[3], cfg.filter[4].u8[2], cfg.filter[4].u8[1],cfg.filter[4].u8[0],
     cfg.filter[5].u8[3], cfg.filter[5].u8[2], cfg.filter[5].u8[1],cfg.filter[5].u8[0]);
 
   // Write masks 0-1:
-  m_spibus->spi_cmd(m_spi, buf, 0, 10, CMD_WRITE, REG_RXM0SIDH,
+  SPI_CMD( buf, 0, 10, CMD_WRITE, REG_RXM0SIDH,
     cfg.mask[0].u8[3], cfg.mask[0].u8[2], cfg.mask[0].u8[1],cfg.mask[0].u8[0],
     cfg.mask[1].u8[3], cfg.mask[1].u8[2], cfg.mask[1].u8[1],cfg.mask[1].u8[0]);
 
@@ -438,7 +444,7 @@ esp_err_t mcp2515::ViewRegisters()
   uint8_t buf[20];
   uint8_t cnf[3];
   // fetch configuration registers
-  uint8_t * rcvbuf = m_spibus->spi_cmd(m_spi, buf, 9, 2, CMD_READ, REG_CNF3);
+  uint8_t * rcvbuf = SPI_CMD( buf, 9, 2, CMD_READ, REG_CNF3);
   cnf[0] = rcvbuf[2];
   cnf[1] = rcvbuf[1];
   cnf[2] = rcvbuf[0];
@@ -449,12 +455,12 @@ esp_err_t mcp2515::ViewRegisters()
     "%s: CANINTE 0x%02x CANINTF 0x%02x EFLG 0x%02x CANSTAT 0x%02x CANCTRL 0x%02x TXB0CTRL 0x%02x",
     this->GetName(), rcvbuf[3], rcvbuf[4], rcvbuf[5], rcvbuf[6], rcvbuf[7], rcvbuf[8]);
   // read error counters
-  rcvbuf = m_spibus->spi_cmd(m_spi, buf, 2, 2, CMD_READ, REG_TEC);
+  rcvbuf = SPI_CMD( buf, 2, 2, CMD_READ, REG_TEC);
   uint8_t errors_tx = rcvbuf[0];
   uint8_t errors_rx = rcvbuf[1];
   ESP_LOGI(TAG, "%s: tx_errors: 0x%02x. rx_errors: 0x%02x", this->GetName(),
       errors_tx, errors_rx);
-  rcvbuf = m_spibus->spi_cmd(m_spi, buf, 1, 2, CMD_READ, REG_BFPCTRL);
+  rcvbuf = SPI_CMD( buf, 1, 2, CMD_READ, REG_BFPCTRL);
   ESP_LOGI(TAG, "%s: BFPCTRL 0x%02x", this->GetName(), rcvbuf[0]);
   return ESP_OK;
   }
@@ -470,7 +476,7 @@ esp_err_t mcp2515::WriteFrame(const CAN_frame_t* p_frame)
 
   // check for free TX buffer:
   uint8_t txbuf;
-  uint8_t* p = m_spibus->spi_cmd(m_spi, buf, 1, 1, CMD_READ_STATUS);
+  uint8_t* p = SPI_CMD( buf, 1, 1, CMD_READ_STATUS);
 
   if ((p[0] & 0b01010100) == 0)  // any buffers busy?
     txbuf = 0b000;  // all clear - use TxB0
@@ -497,7 +503,7 @@ esp_err_t mcp2515::WriteFrame(const CAN_frame_t* p_frame)
     }
 
   // MCP2515 load transmit buffer:
-  m_spibus->spi_cmd(m_spi, buf, 0, 14, CMD_LOAD_TXBUF | txbuf,
+  SPI_CMD( buf, 0, 14, CMD_LOAD_TXBUF | txbuf,
     id[0], id[1], id[2], id[3], p_frame->FIR.B.DLC,
     p_frame->data.u8[0],
     p_frame->data.u8[1],
@@ -509,7 +515,7 @@ esp_err_t mcp2515::WriteFrame(const CAN_frame_t* p_frame)
     p_frame->data.u8[7]);
 
   // MCP2515 request to send:
-  m_spibus->spi_cmd(m_spi, buf, 0, 1, CMD_RTS | (txbuf ? txbuf : 0b001));
+  SPI_CMD( buf, 0, 1, CMD_RTS | (txbuf ? txbuf : 0b001));
 
   return ESP_OK;
   }
@@ -557,7 +563,7 @@ bool mcp2515::AsynchronousInterruptHandler(CAN_frame_t* frame, uint32_t* framesR
   CAN_log_type_t log_status = CAN_LogNone;
 
   // read interrupts (CANINTF 0x2c), errors (EFLG 0x2d) and transmission status (TXB0CTRL 0x30):
-  uint8_t *p = m_spibus->spi_cmd(m_spi, buf, 5, 2, CMD_READ, REG_CANINTF);
+  uint8_t *p = SPI_CMD( buf, 5, 2, CMD_READ, REG_CANINTF);
   uint8_t intstat = p[0];
   uint8_t errflag = p[1];
   uint8_t txb0ctrl = p[4];
@@ -595,7 +601,7 @@ bool mcp2515::AsynchronousInterruptHandler(CAN_frame_t* frame, uint32_t* framesR
     frame->origin = this;
 
     // read RX buffer and clear interrupt flag:
-    uint8_t *p = m_spibus->spi_cmd(m_spi, buf, 13, 1, CMD_READ_RXBUF + ((intflag==1) ? 0 : 4));
+    uint8_t *p = SPI_CMD( buf, 13, 1, CMD_READ_RXBUF + ((intflag==1) ? 0 : 4));
 
     if (p[1] & 0x08) //check for extended mode=1, or std mode=0
       {
@@ -624,7 +630,7 @@ bool mcp2515::AsynchronousInterruptHandler(CAN_frame_t* frame, uint32_t* framesR
   if (intstat & CANINTF_TX012IF)
     {
     // TX buffer(s) have become available; clear IRQs and fill up:
-    m_spibus->spi_cmd(m_spi, buf, 0, 4, CMD_BITMODIFY, REG_CANINTF, intstat & CANINTF_TX012IF, 0);
+    SPI_CMD( buf, 0, 4, CMD_BITMODIFY, REG_CANINTF, intstat & CANINTF_TX012IF, 0);
     m_status.error_flags |= 0x0100;
 
     // Note: the TXnIF bits only get set on successful transmission (see TX flowchart)
@@ -657,7 +663,7 @@ bool mcp2515::AsynchronousInterruptHandler(CAN_frame_t* frame, uint32_t* framesR
       }
 
     // Read error counters:
-    p = m_spibus->spi_cmd(m_spi, buf, 2, 2, CMD_READ, REG_TEC);
+    p = SPI_CMD( buf, 2, 2, CMD_READ, REG_TEC);
     m_status.errors_tx = p[0];
     m_status.errors_rx = p[1];
     if (errflag & EFLG_TXBO)
@@ -678,18 +684,18 @@ bool mcp2515::AsynchronousInterruptHandler(CAN_frame_t* frame, uint32_t* framesR
 
       // Abort TX to cancel further retransmission attempts:
       // … set ABAT, poll for TXREQ to become clear, clear ABAT:
-      m_spibus->spi_cmd(m_spi, buf, 0, 4, CMD_BITMODIFY, REG_CANCTRL, CANCTRL_ABAT, CANCTRL_ABAT);
+      SPI_CMD( buf, 0, 4, CMD_BITMODIFY, REG_CANCTRL, CANCTRL_ABAT, CANCTRL_ABAT);
       do
-        p = m_spibus->spi_cmd(m_spi, buf, 1, 1, CMD_READ_STATUS);
+        p = SPI_CMD( buf, 1, 1, CMD_READ_STATUS);
       while (p[0] & STATUS_TX012REQ);
-      m_spibus->spi_cmd(m_spi, buf, 0, 4, CMD_BITMODIFY, REG_CANCTRL, CANCTRL_ABAT, 0);
+      SPI_CMD( buf, 0, 4, CMD_BITMODIFY, REG_CANCTRL, CANCTRL_ABAT, 0);
 
       // … get TXERR & ABTF flags:
-      p = m_spibus->spi_cmd(m_spi, buf, 1, 2, CMD_READ, REG_TXB0CTRL);
+      p = SPI_CMD( buf, 1, 2, CMD_READ, REG_TXB0CTRL);
       bool tx_aborted = ((p[0] & (TXBCTRL_ABTF | TXBCTRL_TXERR)) != 0);
 
       // … and clear TX IRQs in case the abort request came too late:
-      m_spibus->spi_cmd(m_spi, buf, 0, 4, CMD_BITMODIFY, REG_CANINTF, CANINTF_TX012IF, 0);
+      SPI_CMD( buf, 0, 4, CMD_BITMODIFY, REG_CANINTF, CANINTF_TX012IF, 0);
 
       // Queue TX callback:
       CAN_queue_msg_t msg;
@@ -711,7 +717,7 @@ bool mcp2515::AsynchronousInterruptHandler(CAN_frame_t* frame, uint32_t* framesR
     if (m_status.errors_tx || m_status.errors_rx)
       {
       // Read error counters:
-      p = m_spibus->spi_cmd(m_spi, buf, 2, 2, CMD_READ, REG_TEC);
+      p = SPI_CMD( buf, 2, 2, CMD_READ, REG_TEC);
       m_status.errors_tx = p[0];
       m_status.errors_rx = p[1];
       if (errflag & EFLG_TXBO)
@@ -728,7 +734,7 @@ bool mcp2515::AsynchronousInterruptHandler(CAN_frame_t* frame, uint32_t* framesR
   if (errflag & EFLG_RX01OVR)
     {
     m_status.error_flags |= 0x0800;
-    m_spibus->spi_cmd(m_spi, buf, 0, 4, CMD_BITMODIFY, REG_EFLG, errflag & EFLG_RX01OVR, 0);
+    SPI_CMD( buf, 0, 4, CMD_BITMODIFY, REG_EFLG, errflag & EFLG_RX01OVR, 0);
     }
 
   // Log bus error state change:
@@ -754,7 +760,7 @@ bool mcp2515::AsynchronousInterruptHandler(CAN_frame_t* frame, uint32_t* framesR
   if (intstat & (CANINTF_MERRF | CANINTF_WAKIF | CANINTF_ERRIF))
     {
     m_status.error_flags |= 0x1000;
-    m_spibus->spi_cmd(m_spi, buf, 0, 4, CMD_BITMODIFY, REG_CANINTF,
+    SPI_CMD( buf, 0, 4, CMD_BITMODIFY, REG_CANINTF,
       intstat & (CANINTF_MERRF | CANINTF_WAKIF | CANINTF_ERRIF), 0);
     }
 

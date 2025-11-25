@@ -30,6 +30,7 @@
 
 #include <string.h>
 #include <cstdarg>
+#include "driver/gpio.h"
 #include "spi.h"
 
 spi::spi(const char* name, int misopin, int mosipin, int clkpin)
@@ -103,6 +104,39 @@ uint8_t* spi::spi_cmd(spi_device_handle_t spi, uint8_t* buf, int rxlen, int txle
     UnlockBus();
     }
   return buf + txlen; // return only the data received after tx (half-duplex)
+  }
+
+uint8_t* spi::spi_cmd_sw(spi_device_handle_t spi, int cspin, uint8_t* buf, int rxlen, int txlen, ...)
+  {
+  va_list args;
+  esp_err_t ret;
+
+  memset(buf,0,rxlen+txlen);
+
+  va_start(args, txlen);
+  for (int k=0; k<txlen; k++)
+    {
+    buf[k] = va_arg(args,int);
+    }
+  va_end(args);
+
+  spi_transaction_t t;
+  memset(&t, 0, sizeof(t));
+  t.length=(txlen+rxlen)*8;
+  t.rxlength=(txlen+rxlen)*8;
+  t.tx_buffer=buf;
+  t.rx_buffer=buf;
+  t.user=(void*)0;
+
+  if (LockBus(portMAX_DELAY))
+    {
+    gpio_set_level((gpio_num_t)cspin, 0);
+    ret=spi_device_polling_transmit(spi, &t);
+    gpio_set_level((gpio_num_t)cspin, 1);
+    assert(ret==ESP_OK);
+    UnlockBus();
+    }
+  return buf + txlen;
   }
 
 /************************************
