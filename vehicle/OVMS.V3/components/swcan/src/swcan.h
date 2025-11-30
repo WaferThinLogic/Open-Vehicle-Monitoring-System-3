@@ -40,6 +40,7 @@ class swcan : public mcp2515
 
   public:
     swcan(const char* name, spi* spibus, spi_host_device_t host, int clockspeed, int cspin, int intpin, bool hw_cs=true);
+    swcan(const char* name, spi* spibus, spi_device_handle_t spi, int clockspeed, int cspin, int intpin);
     ~swcan();
 
   public:

@@ -174,13 +174,15 @@ Peripherals::Peripherals()
 #ifdef CONFIG_OVMS_COMP_MCP2515
   ESP_LOGI(TAG, "  MCP2515 CAN 1/2");
   m_mcp2515_1 = new mcp2515("can2", m_spibus, VSPI_HOST, 10000000, VSPI_PIN_MCP2515_1_CS, VSPI_PIN_MCP2515_1_INT);
+  
+  // Initialize can3 with software CS (hw_cs=false) to allow sharing the SPI device with can4
   ESP_LOGI(TAG, "  MCP2515 CAN 2/2");
-  m_mcp2515_2 = new mcp2515("can3", m_spibus, VSPI_HOST, 10000000, VSPI_PIN_MCP2515_2_CS, VSPI_PIN_MCP2515_2_INT);
+  m_mcp2515_2 = new mcp2515("can3", m_spibus, VSPI_HOST, 10000000, VSPI_PIN_MCP2515_2_CS, VSPI_PIN_MCP2515_2_INT, false);
 
 #ifdef CONFIG_OVMS_COMP_EXTERNAL_SWCAN
   ESP_LOGI(TAG, "  SWCAN (MCP2515 + TH8056 DRIVER)");
-  // External SWCAN module with MCP2515, using software CS (VSPI host limit is 3 HW CS)
-  m_mcp2515_swcan = new swcan("can4", m_spibus, VSPI_HOST, 10000000, VSPI_PIN_MCP2515_SWCAN_CS, VSPI_PIN_MCP2515_SWCAN_INT, false);
+  // External SWCAN module with MCP2515, sharing SPI handle with can3, using software CS
+  m_mcp2515_swcan = new swcan("can4", m_spibus, m_mcp2515_2->m_spi, 10000000, VSPI_PIN_MCP2515_SWCAN_CS, VSPI_PIN_MCP2515_SWCAN_INT);
 #endif // #ifdef CONFIG_OVMS_COMP_EXTERNAL_SWCAN
 #endif // #ifdef CONFIG_OVMS_COMP_MCP2515
 

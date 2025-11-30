@@ -60,6 +60,25 @@ swcan::swcan(const char* name, spi* spibus, spi_host_device_t host, int clockspe
   MyEvents.RegisterEvent(TAG,"system.modem.netstart", std::bind(&swcan::ModemEvent, this, _1, _2));  
   }
 
+swcan::swcan(const char* name, spi* spibus, spi_device_handle_t spi, int clockspeed, int cspin, int intpin)
+  : mcp2515(name,spibus,spi,cspin,intpin)
+  {
+  m_status_led = new ovms_led("status led", MAX7317_SWCAN_STATUS_LED);
+  m_tx_led = new ovms_led("tx led", MAX7317_SWCAN_TX_LED);
+  m_rx_led = new ovms_led("rx led", MAX7317_SWCAN_RX_LED);
+
+  using std::placeholders::_1;
+  using std::placeholders::_2;
+  MyEvents.RegisterEvent(TAG,"system.start", std::bind(&swcan::SystemUp, this, _1, _2));  
+  MyEvents.RegisterEvent(TAG,"server.v2.connected", std::bind(&swcan::ServerConnected, this, _1, _2));
+  MyEvents.RegisterEvent(TAG,"server.v2.disconnected", std::bind(&swcan::ServerDisconnected, this, _1, _2));
+  MyEvents.RegisterEvent(TAG,"server.v2.waitreconnect", std::bind(&swcan::ServerDisconnected, this, _1, _2));  
+  MyEvents.RegisterEvent(TAG,"system.modem.poweredon", std::bind(&swcan::ModemEvent, this, _1, _2));  
+  MyEvents.RegisterEvent(TAG,"system.modem.muxstart", std::bind(&swcan::ModemEvent, this, _1, _2));
+  MyEvents.RegisterEvent(TAG,"system.modem.netwait", std::bind(&swcan::ModemEvent, this, _1, _2));  
+  MyEvents.RegisterEvent(TAG,"system.modem.netstart", std::bind(&swcan::ModemEvent, this, _1, _2));  
+  }
+
 swcan::~swcan()
   {
   MyEvents.DeregisterEvent(TAG);  

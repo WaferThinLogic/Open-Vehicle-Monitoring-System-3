@@ -103,6 +103,7 @@ if (m_spibus->m_initialized == false) {
 /********************************/
   esp_err_t ret = spi_bus_add_device(host,  &m_devcfg, &m_spi);
   assert(ret==ESP_OK);
+  m_spi_owned = true;
 
   gpio_set_intr_type((gpio_num_t)m_intpin, GPIO_INTR_NEGEDGE);
   gpio_isr_handler_add((gpio_num_t)m_intpin, MCP2515_isr, (void*)this);
@@ -125,11 +126,37 @@ if (m_spibus->m_initialized == false) {
     0, 8);
   }
 
+mcp2515::mcp2515(const char* name, spi* spibus, spi_device_handle_t spi, int cspin, int intpin)
+  : canbus(name)
+  {
+  m_spibus = spibus;
+  m_spi = spi;
+  m_clockspeed = 10000000; // Assume 10MHz for shared handle
+  m_cspin = cspin;
+  m_intpin = intpin;
+  m_hw_cs = false; // Shared handle implies software CS for this instance (or at least handled externally)
+  m_spi_owned = false; // We don't own the handle, so don't free it
+
+  // For shared handle, we assume the handle is already configured for no-CS or we use software CS logic
+  // Since we use software CS, we need to configure the pin
+  gpio_set_direction((gpio_num_t)m_cspin, GPIO_MODE_OUTPUT);
+  gpio_set_level((gpio_num_t)m_cspin, 1);
+
+  gpio_set_intr_type((gpio_num_t)m_intpin, GPIO_INTR_NEGEDGE);
+  gpio_isr_handler_add((gpio_num_t)m_intpin, MCP2515_isr, (void*)this);
+
+  // Initialise in powered down mode
+  m_powermode = Off; // Stop an event being raised
+  SetPowerMode(Off);
+  SetTransceiverMode(CAN_MODE_LISTEN);
+  }
+
 mcp2515::~mcp2515()
   {
   SetTransceiverMode(CAN_MODE_LISTEN);
   gpio_isr_handler_remove((gpio_num_t)m_intpin);
-  spi_bus_remove_device(m_spi);
+  if (m_spi_owned)
+    spi_bus_remove_device(m_spi);
   }
 
 

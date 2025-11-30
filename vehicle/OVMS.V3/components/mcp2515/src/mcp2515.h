@@ -72,6 +72,7 @@ class mcp2515 : public canbus
   {
   public:
     mcp2515(const char* name, spi* spibus, spi_host_device_t host, int clockspeed, int cspin, int intpin, bool hw_cs=true);
+    mcp2515(const char* name, spi* spibus, spi_device_handle_t spi, int cspin, int intpin);
     ~mcp2515();
 
   public:
@@ -109,6 +110,7 @@ class mcp2515 : public canbus
     int m_cspin;
     int m_intpin;
     bool m_hw_cs;
+    bool m_spi_owned;
     uint8_t m_last_errflag = 0;
     uint8_t m_canctrl_mode;
     OvmsMutex m_write_mutex;
