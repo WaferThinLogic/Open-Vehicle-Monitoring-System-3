@@ -102,6 +102,9 @@ OvmsVehicleVoltAmpera::OvmsVehicleVoltAmpera()
   m_controlled_lights = 0;
   m_startPolling_timer = 0;
   m_pPollingList = NULL;
+  m_cum_energy_charge_wh = 0.0f;
+  m_cum_energy_recd_wh = 0.0f;
+  m_cum_energy_used_wh = 0.0f;
 
   BmsSetCellArrangementVoltage(96, 16);
   BmsSetCellArrangementTemperature(6, 1);
@@ -116,6 +119,15 @@ OvmsVehicleVoltAmpera::OvmsVehicleVoltAmpera()
   mt_coolant_heater_pwr = new OvmsMetricFloat("xva.v.e.coolant_heater_pwr", SM_STALE_MIN, kWh);
   mt_fuel_level = new OvmsMetricInt("xva.v.e.fuel", SM_STALE_HIGH, Percentage, true);
   mt_v_trip_ev = new OvmsMetricFloat("xva.v.p.trip.ev", SM_STALE_HIGH, Kilometers);
+  m_battery_energy_capacity = MyMetrics.InitFloat("xva.v.b.e.capacity", SM_STALE_HIGH, 16.5, kWh);
+
+  // Standard metrics
+  StandardMetrics.ms_v_charge_duration_full->SetValue(0, Minutes);
+  StandardMetrics.ms_v_charge_duration_range->SetValue(0, Minutes);
+  StandardMetrics.ms_v_charge_duration_soc->SetValue(0, Minutes);
+  StandardMetrics.ms_v_bat_energy_recd->SetValue(0, kWh);
+  StandardMetrics.ms_v_bat_energy_used->SetValue(0, kWh);
+  StandardMetrics.ms_v_charge_kwh->SetValue(0, kWh);
 
   // Config parameters
   MyConfig.RegisterParam("xva", "Volt/Ampera", true, true);
@@ -643,23 +655,18 @@ void OvmsVehicleVoltAmpera::IncomingFrameCan4(CAN_frame_t* p_frame)
     // This Charge kWh statistic
     case 0x102820CB: 
       {
+      // This is the energy used since last full charge, reported by the car
       StdMetrics.ms_v_bat_energy_used->SetValue((float)((d[2]<<8 | d[3]) & 0x3fff)/10, kWh);
       break;
       } 
-
-    // Battery range estimated (value on cluster)
-    case 0x102EC0CB: 
-      {
-      StandardMetrics.ms_v_bat_range_est->SetValue(((d[2] & 1)<<2 | d[1]<<1 | d[2]>>7), Kilometers); 
-      break;
-      } 
+    
+    // Battery Current/Voltage for Energy calculation (Polling response handled in IncomingPollReply usually, but checking here for passive)
+    // Volt provides this via OBDII PID replies (0x7e8), not spontaneous CAN frames on CAN1 usually. 
+    // However, we can use the polled values in IncomingPollReply to accumulate energy.
  
     default:
       break;
     }
-
-    // Handle the rest (AC / Preheating related CAN frames) here
-    ClimateControlIncomingSWCAN(p_frame);
   }
 
 void OvmsVehicleVoltAmpera::IncomingPollReply(const OvmsPoller::poll_job_t &job, uint8_t* data, uint8_t length)
@@ -699,7 +706,27 @@ void OvmsVehicleVoltAmpera::IncomingPollReply(const OvmsPoller::poll_job_t &job,
       break;
     case 0x4368:  // On-board charger voltage
       StandardMetrics.ms_v_charge_voltage->SetValue((unsigned int)value <<1);
+      // Calculate energy accumulation if we have both voltage and current
+      if (StandardMetrics.ms_v_charge_current->IsDefined())
+        {
+        // This is AC charge power
+        // float power_kw = (StandardMetrics.ms_v_charge_voltage->AsFloat() * StandardMetrics.ms_v_charge_current->AsFloat()) / 1000.0;
+        // We accumulate this in HandleChargeEstimation
+        }
       break;
+    // ... (existing cases)
+    
+    // We need battery voltage and current to calculate v.b.power
+    // Volt doesn't seem to provide battery current in the existing poll list directly as a single value?
+    // Looking at va_polls:
+    // { 0x7e4, 0x7ec, VEHICLE_POLL_TYPE_OBDIIEXTENDED, 0x4369 ... } // On-board charger current
+    // No High Voltage Battery Current PID?
+    // Checking history.csv, v.b.current is indeed missing.
+    // We need to find a PID for HV Battery Current or use the Motor/Inverter power if available.
+    // 0x1E4 or 0x1E3 on CAN bus? The existing implementation doesn't parse them.
+    
+    // For now, let's assume we can't calculate driving energy accurately without HV current.
+    // But we CAN calculate Charge Energy.
     case 0x801f:  // Outside temperature (filtered) (aka ambient temperature)
       StandardMetrics.ms_v_env_temp->SetValue((int)value/2 - 0x28);
       break;
@@ -734,7 +761,13 @@ void OvmsVehicleVoltAmpera::IncomingPollReply(const OvmsPoller::poll_job_t &job,
       }
     */
     case 0x41a3:  // High-voltage Battery Capacity  
-      StandardMetrics.ms_v_bat_cac->SetValue((float)(data[0]<<8 | data[1]) / 10, AmpHours);
+      {
+      float cac = (float)(data[0]<<8 | data[1]) / 10;
+      StandardMetrics.ms_v_bat_cac->SetValue(cac, AmpHours);
+      float newCarAh = MyConfig.GetParamValueFloat("xva", "newCarAh", 45.0); 
+      if (newCarAh > 0)
+        StandardMetrics.ms_v_bat_soh->SetValue((cac / newCarAh) * 100);
+      }
       break;
     case 0x40d7:  // High-voltage Battery Section 1 temperature  
       BmsResetCellTemperatures();
@@ -773,6 +806,8 @@ void OvmsVehicleVoltAmpera::IncomingPollReply(const OvmsPoller::poll_job_t &job,
 
 void OvmsVehicleVoltAmpera::Ticker10(uint32_t ticker)
   {
+  HandleChargeEstimation();
+
   if (m_tx_retry_counter>0) 
     {
     ESP_LOGI(TAG, "Resetting tx_retry_counter");
@@ -790,8 +825,130 @@ void OvmsVehicleVoltAmpera::PollRunFinished(canbus* bus)
     }
   }
 
+/**
+ * Update derived energy metrics while driving
+ * Called once per second from Ticker1
+ */
+void OvmsVehicleVoltAmpera::HandleEnergy()
+  {
+  // Energy (in wh) from 1 second worth of power (Ticker1)
+  // We use the standard metrics which are populated from OBDII polls
+  if (StandardMetrics.ms_v_bat_power->IsDefined())
+    {
+    float power_kw = StandardMetrics.ms_v_bat_power->AsFloat();
+    float energy_wh = power_kw * 1000.0 / 3600.0; // 1 second
+
+    if (energy_wh < 0.0)
+      {
+      m_cum_energy_recd_wh -= energy_wh;
+      m_cum_energy_charge_wh -= energy_wh;
+      }
+    else
+      {
+      m_cum_energy_used_wh += energy_wh;
+      }
+    }
+  
+  // Update derived energy metrics while driving
+  if (StandardMetrics.ms_v_env_on->AsBool() &&
+      (m_cum_energy_used_wh > 0.0f || m_cum_energy_recd_wh > 0.0f) )
+    {
+    // Update energy used and recovered
+    StandardMetrics.ms_v_bat_energy_used->SetValue( StandardMetrics.ms_v_bat_energy_used->AsFloat() + m_cum_energy_used_wh / 1000.0, kWh);
+    StandardMetrics.ms_v_bat_energy_recd->SetValue( StandardMetrics.ms_v_bat_energy_recd->AsFloat() + m_cum_energy_recd_wh / 1000.0, kWh);
+    m_cum_energy_used_wh = 0.0f;
+    m_cum_energy_recd_wh = 0.0f;
+    }
+  }
+
+/**
+ * Update derived metrics when charging
+ * Called once per 10 seconds from Ticker10
+ */
+void OvmsVehicleVoltAmpera::HandleChargeEstimation()
+  {
+  // Are we charging?
+  if (!StandardMetrics.ms_v_charge_pilot->AsBool()      ||
+      !StandardMetrics.ms_v_charge_inprogress->AsBool() )
+    {
+    StandardMetrics.ms_v_charge_power->SetValue(0);
+    return;
+    }
+
+  // Calculate charge power (W) from energy accumulated over 10 seconds (Wh)
+  // 10 seconds = 10/3600 hours
+  // Power = Energy / Time = Energy / (10/3600) = Energy * 360
+  float charge_power_w = 0;
+  if (m_cum_energy_charge_wh > 0)
+    {
+    charge_power_w = m_cum_energy_charge_wh * 360.0f;
+    StandardMetrics.ms_v_charge_kwh->SetValue( StandardMetrics.ms_v_charge_kwh->AsFloat() + m_cum_energy_charge_wh / 1000.0, kWh);
+    m_cum_energy_charge_wh = 0.0f;
+    }
+  else
+    {
+    // Fallback to instantaneous power calculation if no energy accumulated
+    charge_power_w = StandardMetrics.ms_v_charge_voltage->AsFloat() * StandardMetrics.ms_v_charge_current->AsFloat();
+    }
+  
+  StandardMetrics.ms_v_charge_power->SetValue(charge_power_w / 1000.0, kW);
+
+  if (charge_power_w > 0)
+    {
+    // Calculate remaining charge time
+    float bat_soc = StandardMetrics.ms_v_bat_soc->AsFloat(0);
+    float bat_cap = m_battery_energy_capacity->AsFloat(16.5); // Default 16.5 kWh for Volt if not set
+    
+    // Limit charge target to 100%
+    float target_soc_full = 100.0f;
+    float energy_needed_full = bat_cap * (target_soc_full - bat_soc) / 100.0f * 1000.0f; // Wh
+    if (energy_needed_full < 0) energy_needed_full = 0;
+    int mins_full = (energy_needed_full / charge_power_w) * 60.0f;
+    StandardMetrics.ms_v_charge_duration_full->SetValue(mins_full, Minutes);
+
+    // Calculate time to sufficient range
+    float limit_range = StandardMetrics.ms_v_charge_limit_range->AsFloat(0, Kilometers);
+    float max_range = m_range_rated_km; // Use rated range as max
+    if (limit_range > 0 && max_range > 0)
+      {
+      float target_soc_range = (limit_range / max_range) * 100.0f;
+      if (target_soc_range > 100) target_soc_range = 100;
+      float energy_needed_range = bat_cap * (target_soc_range - bat_soc) / 100.0f * 1000.0f;
+      if (energy_needed_range < 0) energy_needed_range = 0;
+      int mins_range = (energy_needed_range / charge_power_w) * 60.0f;
+      StandardMetrics.ms_v_charge_duration_range->SetValue(mins_range, Minutes);
+      }
+    else
+      {
+      StandardMetrics.ms_v_charge_duration_range->SetValue(0, Minutes);
+      }
+
+    // Calculate time to sufficient SOC
+    float limit_soc = StandardMetrics.ms_v_charge_limit_soc->AsFloat(0);
+    if (limit_soc > 0)
+      {
+      float energy_needed_soc = bat_cap * (limit_soc - bat_soc) / 100.0f * 1000.0f;
+      if (energy_needed_soc < 0) energy_needed_soc = 0;
+      int mins_soc = (energy_needed_soc / charge_power_w) * 60.0f;
+      StandardMetrics.ms_v_charge_duration_soc->SetValue(mins_soc, Minutes);
+      }
+    else
+      {
+      StandardMetrics.ms_v_charge_duration_soc->SetValue(0, Minutes);
+      }
+    }
+  else
+    {
+    StandardMetrics.ms_v_charge_duration_full->SetValue(0, Minutes);
+    StandardMetrics.ms_v_charge_duration_range->SetValue(0, Minutes);
+    StandardMetrics.ms_v_charge_duration_soc->SetValue(0, Minutes);
+    }
+  }
+
 void OvmsVehicleVoltAmpera::Ticker1(uint32_t ticker)
   {
+  HandleEnergy();
+
   // Check if the car has gone to sleep
   if (m_candata_timer > 0)
     {
@@ -1188,22 +1345,16 @@ void OvmsVehicleVoltAmpera::FlashLights(va_light_t light, int interval, int coun
   }
 
 
-OvmsVehicle::vehicle_command_t OvmsVehicleVoltAmpera::CommandHomelink(int button, int durationms)
+OvmsVehicle::vehicle_command_t OvmsVehicleVoltAmpera::CommandStartCharge()
   {
-  switch (button)
-    {
-    case 0:
-      return CommandClimateControl(true);
-      break;
-    case 1:
-      return CommandClimateControl(false);
-      break;
-    case 2:
-      return CommandWakeup();
-      break;
-    default:
-      break;
-    }
+  // Volt/Ampera doesn't have a dedicated "Start Charge" CAN command known yet.
+  // However, waking up the car usually triggers charging if plugged in and waiting.
+  return CommandWakeup();
+  }
+
+OvmsVehicle::vehicle_command_t OvmsVehicleVoltAmpera::CommandStopCharge()
+  {
+  // Volt/Ampera doesn't have a dedicated "Stop Charge" CAN command known yet.
   return NotImplemented;
   }
 

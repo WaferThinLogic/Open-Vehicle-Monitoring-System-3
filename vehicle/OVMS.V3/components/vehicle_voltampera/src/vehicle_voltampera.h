@@ -77,7 +77,8 @@ class OvmsVehicleVoltAmpera : public OvmsVehicle
     vehicle_command_t CommandClimateControl(bool enable) override;
     vehicle_command_t CommandLock(const char* pin) override;
     vehicle_command_t CommandUnlock(const char* pin) override;
-    vehicle_command_t CommandHomelink(int button, int durationms=1000) override;
+    vehicle_command_t CommandStartCharge() override;
+    vehicle_command_t CommandStopCharge() override;
     vehicle_command_t CommandLights(va_light_t lights, bool turn_on);
     vehicle_command_t CommandSetChargeCurrent(uint16_t limit) override;
     void FlashLights(va_light_t light, int interval=500, int count=1); // milliseconds
@@ -110,6 +111,10 @@ class OvmsVehicleVoltAmpera : public OvmsVehicle
     //va_notify
     void NotifyFuel();
     void NotifyMetrics();
+
+    // General handlers
+    void HandleChargeEstimation();
+    void HandleEnergy();
 
     void PollRunFinished(canbus* bus) override;
   protected:
@@ -146,6 +151,11 @@ class OvmsVehicleVoltAmpera : public OvmsVehicle
     OvmsMetricVector<int> * mt_charging_limits;
     OvmsMetricInt *  mt_fuel_level;                 // %
     OvmsMetricFloat *  mt_v_trip_ev;                // km
+    OvmsMetricFloat * m_battery_energy_capacity;
+
+    float m_cum_energy_charge_wh;
+    float m_cum_energy_recd_wh;
+    float m_cum_energy_used_wh;
 
     unsigned long m_preheat_modechange_timer;
     va_preheat_commander_t m_preheat_commander;
