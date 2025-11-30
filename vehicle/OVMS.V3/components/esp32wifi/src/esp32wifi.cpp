@@ -1098,9 +1098,7 @@ void esp32wifi::EventWifiGotIp(std::string event, void* data)
 
 bool esp32wifi::WifiHasIp()
   {
-  char numstr[150];
-  sprintf(numstr, IPSTR, IP2STR(&m_ip_info_sta.ip));
-  return strcmp(numstr, "0.0.0.0") == 1;
+  return m_ip_info_sta.ip.addr != 0;
   }
 
 void esp32wifi::EventWifiLostIp(std::string event, void* data)
@@ -1507,6 +1505,10 @@ void esp32wifi::ConfigChanged(std::string event, void* data)
     {
     // Network config has been changed, apply:
     m_good_dbm = MyConfig.GetParamValueFloat("network", "wifi.sq.good", -87);
+    if (m_good_dbm > -60.0) {
+        ESP_LOGW(TAG, "ConfigChanged: wifi.sq.good=%.1f is too high, resetting to -87.0", m_good_dbm);
+        m_good_dbm = -87.0;
+    }
     m_bad_dbm = MyConfig.GetParamValueFloat("network", "wifi.sq.bad", -89);
     m_ap2client_timeout  = MyConfig.GetParamValueInt("network", "wifi.ap2client.timeout", 30) * 60;        //!< Wifi Mode APClient to client timeout in minutes to seconds for ticker1
     m_ap2client_enabled  = MyConfig.GetParamValueInt("network", "wifi.ap2client.enable", false);           //!< Wifi Mode APClient to client enable/disable    

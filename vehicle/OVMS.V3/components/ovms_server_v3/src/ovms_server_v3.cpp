@@ -1155,6 +1155,11 @@ void OvmsServerV3::Ticker1(std::string event, void* data)
 
   m_connection_available = (net_connected && net_ip && net_good_sq);
 
+  if (m_connretry > 0 || !m_connection_available) {
+      ESP_LOGI(TAG, "Ticker1: conn_avail=%d connected=%d ip=%d good_sq=%d retry=%d counter=%d",
+          m_connection_available, net_connected, net_ip, net_good_sq, m_connretry, m_connection_counter);
+  }
+
   // Reset jitter & counters when network lost
   if (!m_connection_available)
     {
@@ -1199,17 +1204,6 @@ void OvmsServerV3::Ticker1(std::string event, void* data)
       return;
       }
     }
-    if (m_connretry == 0 &&
-        m_connection_counter >= (m_conn_stable_wait + m_connect_jitter) &&
-        !StandardMetrics.ms_s_v3_connected->AsBool() &&
-        m_mgconn == NULL)
-      {
-      ESP_LOGI(TAG,"Attempt connect: counter=%d need=%d jitter=%d",
-               m_connection_counter, m_conn_stable_wait + m_connect_jitter, m_connect_jitter);
-      Connect();
-      return;
-      }
-    
 
   // Retry backoff countdown
   if (m_connretry > 0)

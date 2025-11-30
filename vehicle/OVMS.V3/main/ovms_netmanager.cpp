@@ -595,6 +595,8 @@ void OvmsNetManager::WifiStaCheckSQ(OvmsMetric* metric)
   if (m_wifi_sta)
     {
     float sq = StdMetrics.ms_m_net_wifi_sq->AsFloat();
+    ESP_LOGE(TAG, "WifiStaCheckSQ: sq=%.1f good=%d threshold_good=%.1f threshold_bad=%.1f",
+             sq, m_wifi_good, m_cfg_wifi_sq_good, m_cfg_wifi_sq_bad);
     if ((!metric || !m_wifi_good) && sq >= m_cfg_wifi_sq_good)
       {
       m_wifi_good = true;
@@ -749,6 +751,10 @@ void OvmsNetManager::ConfigChanged(std::string event, void* data)
     // Network config has been changed, apply:
     m_cfg_reboot_no_connection = MyConfig.GetParamValueBool("network", "reboot.no.ip", false);
     m_cfg_wifi_sq_good = MyConfig.GetParamValueFloat("network", "wifi.sq.good", -87);
+    if (m_cfg_wifi_sq_good > -60.0) {
+        ESP_LOGW(TAG, "ConfigChanged: wifi.sq.good=%.1f is too high, resetting to -87.0", m_cfg_wifi_sq_good);
+        m_cfg_wifi_sq_good = -87.0;
+    }
     m_cfg_wifi_sq_bad = MyConfig.GetParamValueFloat("network", "wifi.sq.bad",  -89);
     if (m_cfg_wifi_sq_good < m_cfg_wifi_sq_bad)
       {

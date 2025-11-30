@@ -2188,6 +2188,7 @@ OvmsServerV2::OvmsServerV2(const char* name)
 
   // init event listener:
   MyEvents.RegisterEvent(TAG,"network.up", std::bind(&OvmsServerV2::NetUp, this, _1, _2));
+  MyEvents.RegisterEvent(TAG,"network.reconfigured", std::bind(&OvmsServerV2::NetUp, this, _1, _2));
   MyEvents.RegisterEvent(TAG,"network.down", std::bind(&OvmsServerV2::NetDown, this, _1, _2));
   MyEvents.RegisterEvent(TAG,"network.reconfigured", std::bind(&OvmsServerV2::NetReconfigured, this, _1, _2));
   MyEvents.RegisterEvent(TAG,"network.mgr.init", std::bind(&OvmsServerV2::NetmanInit, this, _1, _2));
