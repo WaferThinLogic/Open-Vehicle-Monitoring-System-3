@@ -595,16 +595,18 @@ void OvmsNetManager::WifiStaCheckSQ(OvmsMetric* metric)
   if (m_wifi_sta)
     {
     float sq = StdMetrics.ms_m_net_wifi_sq->AsFloat();
-    ESP_LOGE(TAG, "WifiStaCheckSQ: sq=%.1f good=%d threshold_good=%.1f threshold_bad=%.1f",
+    ESP_LOGD(TAG, "WifiStaCheckSQ: sq=%.1f good=%d threshold_good=%.1f threshold_bad=%.1f",
              sq, m_wifi_good, m_cfg_wifi_sq_good, m_cfg_wifi_sq_bad);
     if ((!metric || !m_wifi_good) && sq >= m_cfg_wifi_sq_good)
       {
       m_wifi_good = true;
+      StdMetrics.ms_m_net_good_sq->SetValue(true);
       MyEvents.SignalEvent("network.wifi.sta.good", NULL);
       }
     else if ((!metric || m_wifi_good) && sq <= m_cfg_wifi_sq_bad)
       {
       m_wifi_good = false;
+      StdMetrics.ms_m_net_good_sq->SetValue(false);
       MyEvents.SignalEvent("network.wifi.sta.bad", NULL);
       }
     }
