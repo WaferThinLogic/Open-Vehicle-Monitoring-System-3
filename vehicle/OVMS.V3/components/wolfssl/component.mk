@@ -78,5 +78,5 @@ COMPONENT_OBJS += wolfssl/wolfcrypt/src/wc_port.o
 COMPONENT_OBJS += wolfssl/wolfcrypt/src/wolfevent.o
 COMPONENT_OBJS += wolfssl/wolfcrypt/src/wolfmath.o
 
-CFLAGS += -Wno-char-subscripts -DWOLFSSL_USER_SETTINGS -Wno-maybe-uninitialized
+CFLAGS += -Wno-char-subscripts -DWOLFSSL_USER_SETTINGS
 endif
