@@ -932,9 +932,13 @@ void OvmsNetManager::DoSafePrioritiseAndIndicate()
     SetNetType("modem");
     search = "pp";
     dns = m_dns_modem;
+#ifdef CONFIG_OVMS_COMP_CELLULAR
     m_has_ip = MyPeripherals->m_cellular_modem->ModemIsNetMode() &&
               MyPeripherals->m_cellular_modem->m_mux->IsMuxUp() &&
               MyPeripherals->m_cellular_modem->m_ppp->m_connected;
+#else
+    m_has_ip = false;
+#endif
     }
   StdMetrics.ms_m_net_ip->SetValue(m_has_ip);
 

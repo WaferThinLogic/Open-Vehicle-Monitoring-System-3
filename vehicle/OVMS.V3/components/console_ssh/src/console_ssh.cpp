@@ -1210,6 +1210,7 @@ static void wolfssh_logger(enum wolfSSH_LogLevel level, const char* const msg)
     case WS_LOG_SFTP:
     case WS_LOG_USER:
     case WS_LOG_ERROR:
+    case WS_LOG_CERTMAN:
       ESP_LOGE(wolfssh_tag, "%s", msg);
       break;
 

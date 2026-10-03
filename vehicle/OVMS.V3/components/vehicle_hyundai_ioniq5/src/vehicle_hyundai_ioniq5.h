@@ -42,7 +42,7 @@
 // #define DEBUG_FUNC_LEAVE
 
 // Define when canwrite is available
-// #define XIQ_CAN_WRITE
+#define XIQ_CAN_WRITE
 
 using namespace std;
 
@@ -126,6 +126,9 @@ protected:
   bool Send_BCM_Command( uint8_t b1, uint8_t b2, uint8_t b3);
   bool Send_SMK_Command( uint8_t b1, uint8_t b2, uint8_t b3, uint8_t b4, uint8_t b5, uint8_t b6, uint8_t b7);
   bool Send_EBP_Command( uint8_t b1, uint8_t b2, uint8_t mode);
+  bool Send_AirCon_Command(uint8_t b1, uint8_t b2, uint8_t b3, uint8_t b4);
+  bool SendClimateCommand(bool start, int duration_minutes);
+  void SendClimateSpamMessages(bool start);
   void SendTesterPresent(uint16_t id, uint8_t length);
   bool SetSessionMode(uint16_t id, uint8_t mode);
   void SendCanMessage(uint16_t id, uint8_t count,
@@ -171,6 +174,14 @@ protected:
 
   int m_checklock_retry, m_checklock_start, m_checklock_notify;
   bool m_aux_is_charging, m_aux_is_low;
+  
+  // Connection mode: 0=OBD port, 1=Intercept harness
+  bool m_con_obd;
+  
+  // Climate control state
+  bool m_climate_active;
+  int m_climate_duration_minutes;
+  uint32_t m_climate_start_time;
 
   // Detecting of continuous charging of AUX battery.
   // Tries to not rock the boat by turning on the ICU unnecessarily.
@@ -211,6 +222,11 @@ protected:
   bool RearDefogger(bool);
   bool FoldMirrors(bool);
   bool BlueChargeLed(bool on, uint8_t mode);
+  
+  // Remote climate control
+  bool StartClimate(const char *password, int duration_minutes = 0);
+  bool StopClimate(const char *password);
+  bool SetClimateTemperature(float temperature_celsius);
   void SetChargeMetrics(float voltage, float current, float climit, bool ccs);
   void SendTesterPresentMessages();
   void StopTesterPresentMessages();

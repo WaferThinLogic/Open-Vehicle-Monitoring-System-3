@@ -224,8 +224,12 @@ void OvmsVehicleSmartEQ::HandleTripcounter(){
 
 void OvmsVehicleSmartEQ::HandleServerCon(){
   // Handle Server connection
+#ifdef CONFIG_OVMS_COMP_CELLULAR
   bool modem_off = (MyPeripherals && MyPeripherals->m_cellular_modem &&
                     MyPeripherals->m_cellular_modem->GetPowerMode() == Off);
+#else
+  bool modem_off = false;
+#endif
 
   if (modem_off || StdMetrics.ms_s_v2_connected->AsBool() || StdMetrics.ms_s_v3_connected->AsBool()) 
     {

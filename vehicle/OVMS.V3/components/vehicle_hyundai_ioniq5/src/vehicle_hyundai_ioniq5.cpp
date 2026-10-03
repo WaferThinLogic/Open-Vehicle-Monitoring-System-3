@@ -29,7 +29,7 @@
 ;    (C) 2011       Michael Stegen / Stegen Electronics
 ;    (C) 2011-2017  Mark Webb-Johnson
 ;    (C) 2011       Sonny Chen @ EPRO/DX
-;    (C) 2019       Geir Øyvind Vælidalo <geir@validalo.net>
+;    (C) 2019       Geir Ã˜yvind VÃ¦lidalo <geir@validalo.net>
 ;;
 ; Permission is hereby granted, free of charge, to any person obtaining a copy
 ; of this software and associated documentation files (the "Software"), to deal
@@ -375,6 +375,11 @@ OvmsHyundaiIoniqEv::OvmsHyundaiIoniqEv()
   m_reached_next_odo = false;
 
   m_v_charge_current_request = MyMetrics.InitFloat("xiq.v.c.current.req", SM_STALE_MID, 0, Amps);
+  
+  // Climate control state variables
+  m_climate_active = false;
+  m_climate_duration_minutes = 0;
+  m_climate_start_time = 0;
 
   // Guess if odo is in miles or kilometers
   float odo = StdMetrics.ms_v_pos_odometer->AsFloat(Kilometers);
@@ -587,7 +592,7 @@ void OvmsHyundaiIoniqEv::ConfigChanged(OvmsConfigParam *param)
   //    cap_act_kwh     Battery capacity in kwH
   //  suffsoc           Sufficient SOC [%] (Default: 0=disabled)
   //  suffrange         Sufficient range [km] (Default: 0=disabled)
-  //  maxrange          Maximum ideal range at 20 °C [km] (Default: 160)
+  //  maxrange          Maximum ideal range at 20 Â°C [km] (Default: 160)
   //  canwrite          Enable commands
   int newcap = MyConfig.GetParamValueInt("xiq", "cap_act_kwh", 0);
 
@@ -1130,6 +1135,17 @@ void OvmsHyundaiIoniqEv::Ticker10(uint32_t ticker)
       ++m_vin_retry;
     }
   }
+  
+  // Check climate control auto-shutoff
+  if (m_climate_active && m_climate_duration_minutes > 0) {
+    uint32_t elapsed_seconds = (esp_timer_get_time() / 1000000) - m_climate_start_time;
+    int duration_seconds = m_climate_duration_minutes * 60;
+    
+    if (elapsed_seconds >= (uint32_t)duration_seconds) {
+      ESP_LOGI(TAG, "Climate control auto-shutoff after %d minutes", m_climate_duration_minutes);
+      StopClimate("0000"); // Use default PIN for auto-shutoff
+    }
+  }
 }
 
 void OvmsHyundaiIoniqEv::MetricModified(OvmsMetric* metric)
@@ -1519,6 +1535,141 @@ bool OvmsHyundaiIoniqEv::OpenTrunk(const char *password)
     }
   }
   */
+  XDISARM;
+  return false;
+}
+
+/**
+ * Start climate control (preconditioning)
+ * @param password PIN code for authentication
+ * @param duration_minutes Auto-shutoff duration in minutes (0 = manual stop)
+ * @return true if command was sent successfully
+ */
+bool OvmsHyundaiIoniqEv::StartClimate(const char *password, int duration_minutes)
+{
+  XARM("OvmsHyundaiIoniqEv::StartClimate");
+  
+  // Safety checks
+  if (m_con_obd) {
+    ESP_LOGE(TAG, "Climate start blocked: not in intercept harness mode");
+    XDISARM;
+    return false;
+  }
+  
+  if (!kia_enable_write) {
+    ESP_LOGE(TAG, "Climate start blocked: canwrite not enabled");
+    XDISARM;
+    return false;
+  }
+  
+  if (!PinCheck((char *)password)) {
+    ESP_LOGE(TAG, "Climate start failed: invalid PIN");
+    XDISARM;
+    return false;
+  }
+  
+  if (iq_shift_status != IqShiftStatus::Park) {
+    ESP_LOGW(TAG, "Climate start blocked: vehicle not in Park");
+    XDISARM;
+    return false;
+  }
+  
+  // Check if already active
+  if (m_climate_active) {
+    ESP_LOGW(TAG, "Climate control already active");
+    XDISARM;
+    return false;
+  }
+  
+  // Send climate command
+  bool result = SendClimateCommand(true, duration_minutes);
+  
+  if (result) {
+    m_climate_active = true;
+    m_climate_duration_minutes = duration_minutes;
+    m_climate_start_time = esp_timer_get_time() / 1000000;
+    ESP_LOGI(TAG, "Climate control started (duration: %d min)", duration_minutes);
+  }
+  
+  XDISARM;
+  return result;
+}
+
+/**
+ * Stop climate control
+ * @param password PIN code for authentication
+ * @return true if command was sent successfully
+ */
+bool OvmsHyundaiIoniqEv::StopClimate(const char *password)
+{
+  XARM("OvmsHyundaiIoniqEv::StopClimate");
+  
+  // Safety checks
+  if (m_con_obd) {
+    ESP_LOGE(TAG, "Climate stop blocked: not in intercept harness mode");
+    XDISARM;
+    return false;
+  }
+  
+  if (!kia_enable_write) {
+    ESP_LOGE(TAG, "Climate stop blocked: canwrite not enabled");
+    XDISARM;
+    return false;
+  }
+  
+  if (!PinCheck((char *)password)) {
+    ESP_LOGE(TAG, "Climate stop failed: invalid PIN");
+    XDISARM;
+    return false;
+  }
+  
+  if (iq_shift_status != IqShiftStatus::Park) {
+    ESP_LOGW(TAG, "Climate stop blocked: vehicle not in Park");
+    XDISARM;
+    return false;
+  }
+  
+  // Check if active
+  if (!m_climate_active) {
+    ESP_LOGW(TAG, "Climate control not active");
+    XDISARM;
+    return false;
+  }
+  
+  // Send stop command
+  bool result = SendClimateCommand(false, 0);
+  
+  if (result) {
+    m_climate_active = false;
+    m_climate_duration_minutes = 0;
+    m_climate_start_time = 0;
+    ESP_LOGI(TAG, "Climate control stopped");
+  }
+  
+  XDISARM;
+  return result;
+}
+
+/**
+ * Set climate control temperature
+ * @param temperature_celsius Target temperature in Celsius
+ * @return true if command was sent successfully (currently always false - not implemented)
+ */
+bool OvmsHyundaiIoniqEv::SetClimateTemperature(float temperature_celsius)
+{
+  XARM("OvmsHyundaiIoniqEv::SetClimateTemperature");
+  
+  // Validate temperature range (15-30°C typical for HVAC)
+  if (temperature_celsius < 15.0 || temperature_celsius > 30.0) {
+    ESP_LOGE(TAG, "Climate temperature out of range: %.1f°C", temperature_celsius);
+    XDISARM;
+    return false;
+  }
+  
+  // TODO: Implement temperature control
+  // Requires reverse engineering of AirCon ECU temperature PID
+  ESP_LOGW(TAG, "Climate temperature control not yet implemented");
+  
   XDISARM;
   return false;
 }

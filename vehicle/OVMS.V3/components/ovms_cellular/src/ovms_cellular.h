@@ -150,8 +150,6 @@ class modem : public pcp, public InternalRamAllocated
     std::string            m_line_buffer;
     network_registration_t m_netreg;
     network_registration_t m_netreg_d[CELLULAR_NETREG_COUNT];
-    int                    m_netreg_retry_ticks;
-    bool                   m_net_type_auto_override;
     std::string            m_provider;
     int                    m_sq;
     bool                   m_pincode_required;
@@ -247,7 +245,6 @@ class modem : public pcp, public InternalRamAllocated
     void SendSetState1(modem_state1_t newstate);
     bool IsStarted();
     void SetNetworkRegistration(network_regtype_t regtype, network_registration_t netreg);
-    void UpdateNetworkType();
     void SetProvider(std::string provider);
     void SetSignalQuality(int newsq);
     void ClearNetMetrics();

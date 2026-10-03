@@ -38,6 +38,20 @@ bool OvmsHyundaiIoniqEv::SendCanMessage_sync(uint16_t id, uint8_t count,
   uint8_t b5, uint8_t b6)
 {
   XARM("OvmsHyundaiIoniqEv::SendCanMessage_sync");
+  
+  // Safety check: require intercept harness mode for CAN writes
+  if (m_con_obd) {
+    ESP_LOGE(TAG, "CAN write blocked: not in intercept harness mode (set xiq.con_obd=0)");
+    XDISARM;
+    return false;
+  }
+  
+  if (!kia_enable_write) {
+    ESP_LOGE(TAG, "CAN write blocked: canwrite not enabled (set xiq.canwrite=1)");
+    XDISARM;
+    return false;
+  }
+  
   uint16_t timeout;
 
 #ifdef QUIET_WHILE_SENDING
@@ -102,11 +116,19 @@ void OvmsHyundaiIoniqEv::SendCanMessage(uint16_t id, uint8_t count,
   uint8_t b5, uint8_t b6)
 {
   XARM("OvmsHyundaiIoniqEv::SendCanMessage");
-  if (!kia_enable_write) {
+  
+  // Safety check: require intercept harness mode for CAN writes
+  if (m_con_obd) {
+    ESP_LOGE(TAG, "CAN write blocked: not in intercept harness mode (set xiq.con_obd=0)");
     XDISARM;
     return;
   }
-
+  
+  if (!kia_enable_write) {
+    ESP_LOGE(TAG, "CAN write blocked: canwrite not enabled (set xiq.canwrite=1)");
+    XDISARM;
+    return;
+  }
 
   uint8_t data[] = {count, serviceId, b1, b2, b3, b4, b5, b6};
   m_can1->WriteStandard(id, 8, data);
@@ -122,7 +144,16 @@ void OvmsHyundaiIoniqEv::SendCanMessageTriple(uint16_t id, uint8_t count,
   uint8_t b5, uint8_t b6)
 {
   XARM("OvmsHyundaiIoniqEv::SendCanMessageTriple");
+  
+  // Safety check: require intercept harness mode for CAN writes
+  if (m_con_obd) {
+    ESP_LOGE(TAG, "CAN write blocked: not in intercept harness mode (set xiq.con_obd=0)");
+    XDISARM;
+    return;
+  }
+  
   if (!kia_enable_write) {
+    ESP_LOGE(TAG, "CAN write blocked: canwrite not enabled (set xiq.canwrite=1)");
     XDISARM;
     return;
   }
@@ -142,10 +173,12 @@ void OvmsHyundaiIoniqEv::SendCanMessageTriple(uint16_t id, uint8_t count,
  */
 void OvmsHyundaiIoniqEv::SetHeadLightDelay(bool on)
 {
-  //XARM("OvmsHyundaiIoniqEv::SetHeadLightDelay");
-  //  if(kia_enable_write)
-  //    SendCanMessageTriple(0x014, 0,0, on ? 0x08:0x04 ,0,0,0,0,0);
-  //XDISARM;
+  XARM("OvmsHyundaiIoniqEv::SetHeadLightDelay");
+  if (!m_con_obd && kia_enable_write) {
+    SendCanMessageTriple(0x014, 0, 0, on ? 0x08 : 0x04, 0, 0, 0, 0, 0);
+    ESP_LOGI(TAG, "Head light delay: %s", on ? "enabled" : "disabled");
+  }
+  XDISARM;
 }
 
 /**
@@ -158,8 +191,12 @@ void OvmsHyundaiIoniqEv::SetHeadLightDelay(bool on)
  */
 void OvmsHyundaiIoniqEv::SetOneThouchTurnSignal(uint8_t value)
 {
-  //  if(kia_enable_write)
-  //    SendCanMessageTriple(0x014, (value+1)<<5 ,0,0,0,0,0,0,0);
+  XARM("OvmsHyundaiIoniqEv::SetOneThouchTurnSignal");
+  if (!m_con_obd && kia_enable_write) {
+    SendCanMessageTriple(0x014, (value + 1) << 5, 0, 0, 0, 0, 0, 0, 0);
+    ESP_LOGI(TAG, "One touch turn signal set to: %d blinks", value * 2 + 1);
+  }
+  XDISARM;
 }
 
 /**
@@ -171,8 +208,12 @@ void OvmsHyundaiIoniqEv::SetOneThouchTurnSignal(uint8_t value)
  */
 void OvmsHyundaiIoniqEv::SetAutoDoorUnlock(uint8_t value)
 {
-  //  if(kia_enable_write)
-  //    SendCanMessageTriple(0x014, 0,value,0,0,0,0,0,0);
+  XARM("OvmsHyundaiIoniqEv::SetAutoDoorUnlock");
+  if (!m_con_obd && kia_enable_write) {
+    SendCanMessageTriple(0x014, 0, value, 0, 0, 0, 0, 0, 0);
+    ESP_LOGI(TAG, "Auto door unlock setting: %d", value);
+  }
+  XDISARM;
 }
 
 /**
@@ -184,8 +225,10 @@ void OvmsHyundaiIoniqEv::SetAutoDoorUnlock(uint8_t value)
 void OvmsHyundaiIoniqEv::SetAutoDoorLock(uint8_t value)
 {
   XARM("OvmsHyundaiIoniqEv::SetAutoDoorLock");
-  //  if(kia_enable_write)
-  //    SendCanMessageTriple(0x014, 0,(value+1)<<5,0,0,0,0,0,0);
+  if (!m_con_obd && kia_enable_write) {
+    SendCanMessageTriple(0x014, 0, (value + 1) << 5, 0, 0, 0, 0, 0, 0);
+    ESP_LOGI(TAG, "Auto door lock setting: %d", value);
+  }
   XDISARM;
 }
 
@@ -251,7 +294,16 @@ bool OvmsHyundaiIoniqEv::SetSessionMode(uint16_t id, uint8_t mode)
 bool OvmsHyundaiIoniqEv::SendCommandInSessionMode(uint16_t id, uint8_t count, uint8_t serviceId, uint8_t b1, uint8_t b2, uint8_t b3, uint8_t b4, uint8_t b5, uint8_t b6, uint8_t mode )
 {
   XARM("OvmsHyundaiIoniqEv::SendCommandInSessionMode");
+  
+  // Safety check: require intercept harness mode for CAN writes
+  if (m_con_obd) {
+    ESP_LOGE(TAG, "CAN write blocked: not in intercept harness mode (set xiq.con_obd=0)");
+    XDISARM;
+    return false;
+  }
+  
   if (!kia_enable_write) {
+    ESP_LOGE(TAG, "CAN write blocked: canwrite not enabled (set xiq.canwrite=1)");
     XDISARM;
     return false;
   }
@@ -318,5 +370,88 @@ bool OvmsHyundaiIoniqEv::Send_EBP_Command( uint8_t b1, uint8_t b2, uint8_t mode)
   bool res = SendCommandInSessionMode(ABS_EBP_UNIT, 3, UDS_SID_IOCTRL_BY_LOC_ID, b1, b2, 0, 0, 0, 0, mode );
   XDISARM;
   return res;
+}
+
+/**
+ * Send command to Air Conditioning (HVAC) Module
+ * 7b3 [len] [service] [b1] [b2] [b3] [b4]
+ * Uses VEHICLE_POLL_TYPE_READDATA (0x22) for writing climate settings
+ */
+bool OvmsHyundaiIoniqEv::Send_AirCon_Command(uint8_t b1, uint8_t b2, uint8_t b3, uint8_t b4)
+{
+  XARM("OvmsHyundaiIoniqEv::Send_AirCon_Command");
+  // AirCon ECU: 0x7b3 -> 0x7bb
+  // Note: Climate commands may require repeated sending ("spamming") to work reliably
+  bool res = SendCommandInSessionMode(0x7b3, 4, UDS_SID_IOCTRL_BY_ID, b1, b2, b3, b4, 0, 0, UDS_EXTENDED_DIAGNOSTIC_SESSION);
+  XDISARM;
+  return res;
+}
+
+/**
+ * Send climate control command sequence
+ * Based on reverse engineering from Discord community
+ * Requires intercept harness and canwrite enabled
+ * 
+ * Command structure for HVAC control:
+ * - Start: 0x22 0x01 0x00 [mode] where mode: 0x01=ON, 0x00=OFF
+ * - Duration: Optional, in minutes (0 = until manually stopped)
+ */
+bool OvmsHyundaiIoniqEv::SendClimateCommand(bool start, int duration_minutes)
+{
+  XARM("OvmsHyundaiIoniqEv::SendClimateCommand");
+  
+  // Additional safety: require vehicle in Park for climate control
+  if (StdMetrics.ms_v_env_gear->AsInt() != 0) {
+    ESP_LOGE(TAG, "Climate control blocked: vehicle not in Park (gear=%d)", StdMetrics.ms_v_env_gear->AsInt());
+    XDISARM;
+    return false;
+  }
+  
+  ESP_LOGI(TAG, "Climate control: %s (duration: %d min)", start ? "START" : "STOP", duration_minutes);
+  
+  // Send initial command
+  uint8_t mode = start ? 0x01 : 0x00;
+  bool result = Send_AirCon_Command(mode, 0x00, 0x00, 0x00);
+  
+  if (result && start) {
+    // Send repeated "spam" messages to ensure command is processed
+    // This is necessary based on community reverse engineering findings
+    SendClimateSpamMessages(true);
+    
+    m_climate_active = true;
+    m_climate_duration_minutes = duration_minutes;
+    m_climate_start_time = esp_timer_get_time() / 1000000; // seconds
+    
+    if (duration_minutes > 0) {
+      ESP_LOGI(TAG, "Climate will auto-stop after %d minutes", duration_minutes);
+    }
+  } else if (result && !start) {
+    m_climate_active = false;
+    m_climate_duration_minutes = 0;
+  }
+  
+  XDISARM;
+  return result;
+}
+
+/**
+ * Send repeated climate control messages ("spamming")
+ * Based on community findings, this increases reliability of climate commands
+ * Sends the same command multiple times with short delays
+ */
+void OvmsHyundaiIoniqEv::SendClimateSpamMessages(bool start)
+{
+  XARM("OvmsHyundaiIoniqEv::SendClimateSpamMessages");
+  
+  uint8_t mode = start ? 0x01 : 0x00;
+  
+  // Send 3-5 repeated commands with 100ms delays
+  // This pattern was discovered by the Ioniq5 CAN reverse engineering community
+  for (int i = 0; i < 3; i++) {
+    Send_AirCon_Command(mode, 0x00, 0x00, 0x00);
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+  
+  XDISARM;
 }
 #endif
