@@ -37,6 +37,11 @@
 #include "ovms_metrics.h"
 #include "id_filter.h"
 
+// Buffered (TCP) log connections: stream buffer size per connection (external RAM),
+// and maximum fill level of the Mongoose send buffer (internal RAM):
+#define CANLOG_TXBUF_SIZE     (256*1024)
+#define CANLOG_SENDBUF_MAX    8192
+
 /**
  * canlog is the general interface and base implementation for all can loggers.
  *  It provides standard methods to open files and configure message filters
@@ -71,6 +76,8 @@ class canlogconnection
 
   public:
     virtual void OutputMsg(CAN_log_message_t& msg, std::string &result);
+    void EnableBuffering();
+    void FlushTx();
 
   public:
     virtual void TransmitCallback(uint8_t *buffer, size_t len);
@@ -99,6 +106,16 @@ class canlogconnection
     uint32_t       m_dropcount;
     uint32_t       m_discardcount;
     uint32_t       m_filtercount;
+
+  protected:
+    bool TxBufferAppend(const uint8_t* data, size_t len);
+
+  protected:
+    bool           m_buffered;
+    uint8_t*       m_txbuf;
+    size_t         m_txsize;
+    size_t         m_txhead;
+    size_t         m_txlen;
   };
 
 class canlog

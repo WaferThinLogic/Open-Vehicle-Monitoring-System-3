@@ -35,6 +35,8 @@ static const char *TAG = "canlog";
 #include <string>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
+#include "ovms_malloc.h"
 #include "ovms_utils.h"
 #include "ovms_config.h"
 #include "ovms_command.h"
@@ -208,10 +210,20 @@ canlogconnection::canlogconnection(canlog* logger, std::string format, canformat
   m_dropcount = 0;
   m_discardcount = 0;
   m_filtercount = 0;
+  m_buffered = false;
+  m_txbuf = NULL;
+  m_txsize = 0;
+  m_txhead = 0;
+  m_txlen = 0;
   }
 
 canlogconnection::~canlogconnection()
   {
+  if (m_txbuf != NULL)
+    {
+    free(m_txbuf);
+    m_txbuf = NULL;
+    }
   if (m_filters != NULL)
     {
     delete m_filters;
@@ -231,6 +243,18 @@ void canlogconnection::OutputMsg(CAN_log_message_t& msg, std::string &result)
   if ((m_filters != NULL) && (! m_filters->IsFiltered(&msg.frame)))
     {
     m_filtercount++;
+    return;
+    }
+
+  if (m_buffered)
+    {
+    // We're called by canlog::OutputMsg() with the logger's m_cmmutex held, and the
+    // Mongoose task takes m_cmmutex while holding the Mongoose lock (in the logger's
+    // MongooseHandler). Taking the Mongoose lock here would invert that order and
+    // deadlock, so we only fill our stream buffer here. The Mongoose task moves the
+    // data on to the connection in FlushTx().
+    if (result.length() > 0 && !TxBufferAppend((const uint8_t*)result.data(), result.length()))
+      m_dropcount++;
     return;
     }
 
@@ -263,6 +287,13 @@ void canlogconnection::TransmitCallback(uint8_t *buffer, size_t len)
   ESP_LOGD(TAG,"TransmitCallback on %s (%d bytes)",m_peer.c_str(),len);
 
   m_msgcount++;
+  if (m_buffered)
+    {
+    // Called by the formatter from the Mongoose task with m_cmmutex held: queue the
+    // reply behind the frames already buffered, so the stream stays intact.
+    if (!TxBufferAppend(buffer, len)) m_dropcount++;
+    return;
+    }
 #ifdef CONFIG_OVMS_SC_GPL_MONGOOSE
   auto mglock = MongooseLock();
   if ((m_nc != NULL)&&(m_nc->send_mbuf.len < 32768))
@@ -274,6 +305,59 @@ void canlogconnection::TransmitCallback(uint8_t *buffer, size_t len)
     {
     m_dropcount++;
     }
+  }
+
+/**
+ * EnableBuffering: decouple the logger task from the Mongoose task by a stream buffer.
+ *  Used by stream (TCP) connections. Call before the connection gets log data.
+ */
+void canlogconnection::EnableBuffering()
+  {
+  if (m_txbuf) return;
+  m_txbuf = (uint8_t*)ExternalRamMalloc(CANLOG_TXBUF_SIZE);
+  if (m_txbuf)
+    {
+    m_txsize = CANLOG_TXBUF_SIZE;
+    m_buffered = true;
+    }
+  else
+    {
+    ESP_LOGE(TAG,"Stream buffer allocation failed for %s, using direct mode", m_peer.c_str());
+    }
+  }
+
+/**
+ * TxBufferAppend: add data to the stream buffer (all or nothing)
+ *  Caller must hold the logger's m_cmmutex.
+ */
+bool canlogconnection::TxBufferAppend(const uint8_t* data, size_t len)
+  {
+  if (len > m_txsize - m_txlen) return false;
+  size_t tail = (m_txhead + m_txlen) % m_txsize;
+  size_t n = std::min(len, m_txsize - tail);
+  memcpy(m_txbuf + tail, data, n);
+  if (n < len) memcpy(m_txbuf, data + n, len - n);
+  m_txlen += len;
+  return true;
+  }
+
+/**
+ * FlushTx: move buffered stream data to the Mongoose send buffer
+ *  To be called by the Mongoose task (on MG_EV_POLL / MG_EV_SEND), with the
+ *  logger's m_cmmutex held.
+ */
+void canlogconnection::FlushTx()
+  {
+#ifdef CONFIG_OVMS_SC_GPL_MONGOOSE
+  if (!m_buffered || m_nc == NULL || m_txlen == 0) return;
+  if (m_nc->send_mbuf.len >= CANLOG_SENDBUF_MAX) return;
+  size_t len = std::min(m_txlen, (size_t)CANLOG_SENDBUF_MAX - m_nc->send_mbuf.len);
+  size_t n = std::min(len, m_txsize - m_txhead);
+  mg_send(m_nc, m_txbuf + m_txhead, n);
+  if (n < len) mg_send(m_nc, m_txbuf, len - n);
+  m_txhead = (m_txhead + len) % m_txsize;
+  m_txlen -= len;
+#endif // CONFIG_OVMS_SC_GPL_MONGOOSE
   }
 
 void canlogconnection::ControlBusConfigure(canbus* bus, CAN_mode_t mode, CAN_speed_t speed)
@@ -331,6 +415,9 @@ std::string canlogconnection::GetStats()
     << " Filtered:" << m_filtercount
     << " Rate:" << std::fixed << std::setprecision(1) << droprate << "%";
 
+  if (m_buffered)
+    buf << " Buffered:" << m_txlen;
+
   return buf.str();
   }
 
@@ -364,7 +451,8 @@ canlog::canlog(const char* type, std::string format, canformat::canformat_serve_
   int queuesize = MyConfig.GetParamValueInt(CAN_PARAM, "log.queuesize",100);
   LoadConfig();
   m_queue = xQueueCreate(queuesize, sizeof(CAN_log_message_t));
-  xTaskCreatePinnedToCore(RxTask, "OVMS CanLog", 4096, (void*)this, 10, &m_task, CORE(1));
+  // Run on core 0, next to CanRx: core 1 is busy with the NetMan & Events tasks while streaming
+  xTaskCreatePinnedToCore(RxTask, "OVMS CanLog", 4096, (void*)this, 10, &m_task, CORE(0));
   }
 
 canlog::~canlog()

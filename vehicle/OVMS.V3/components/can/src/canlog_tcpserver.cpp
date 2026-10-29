@@ -233,6 +233,7 @@ void canlog_tcpserver::MongooseHandler(struct mg_connection *nc, int ev, void *p
       canlogconnection* clc = new canlogconnection(this, m_format, m_mode);
       clc->m_nc = nc;
       clc->m_peer = std::string(addr);
+      clc->EnableBuffering();
       m_connmap[nc] = clc;
       std::string result = clc->m_formatter->getheader();
       if (result.length()>0)
@@ -264,15 +265,26 @@ void canlog_tcpserver::MongooseHandler(struct mg_connection *nc, int ev, void *p
       //ESP_LOGD(TAG,"Received %d bytes of data",used);
       if (m_formatter != NULL)
         {
+        OvmsRecMutexLock lock(&m_cmmutex);
         canlogconnection* clc = NULL;
         auto k = m_connmap.find(nc);
         if (k != m_connmap.end()) clc = k->second;
-        used = clc->m_formatter->Serve((uint8_t*)nc->recv_mbuf.buf, used, clc);
+        if (clc) used = clc->m_formatter->Serve((uint8_t*)nc->recv_mbuf.buf, used, clc);
         }
       if (used > 0)
         {
         mbuf_remove(&nc->recv_mbuf, used);
         }
+      break;
+      }
+
+    case MG_EV_POLL:
+    case MG_EV_SEND:
+      {
+      // Move buffered log data on to the connection (see canlogconnection::OutputMsg())
+      OvmsRecMutexLock lock(&m_cmmutex);
+      auto k = m_connmap.find(nc);
+      if (k != m_connmap.end()) k->second->FlushTx();
       break;
       }
 

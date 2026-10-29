@@ -229,6 +229,7 @@ void canlog_tcpclient::MongooseHandler(struct mg_connection *nc, int ev, void *p
         canlogconnection* clc = new canlogconnection(this, m_format, m_mode);
         clc->m_nc = nc;
         clc->m_peer = m_path;
+        clc->EnableBuffering();
         m_connmap[nc] = clc;
         m_isopen = true;
         std::string result = clc->m_formatter->getheader();
@@ -276,6 +277,15 @@ void canlog_tcpclient::MongooseHandler(struct mg_connection *nc, int ev, void *p
         {
         mbuf_remove(&nc->recv_mbuf, used);
         }
+      break;
+      }
+    case MG_EV_POLL:
+    case MG_EV_SEND:
+      {
+      // Move buffered log data on to the connection (see canlogconnection::OutputMsg())
+      OvmsRecMutexLock lock(&m_cmmutex);
+      auto k = m_connmap.find(nc);
+      if (k != m_connmap.end()) k->second->FlushTx();
       break;
       }
     default:
