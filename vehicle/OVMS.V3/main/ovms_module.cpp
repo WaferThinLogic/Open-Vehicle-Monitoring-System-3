@@ -110,6 +110,23 @@ static void module_check(int verbosity, OvmsWriter* writer, OvmsCommand* cmd, in
 
 void AddTaskToMap(TaskHandle_t task) {}
 
+// Stub implementations when CONFIG_HEAP_TASK_TRACKING is disabled
+bool module_check_heap_integrity(char* buf, size_t size)
+  {
+  if (buf && size > 0) *buf = 0;
+  return true;
+  }
+
+bool module_check_heap_integrity(int verbosity, OvmsWriter* writer)
+  {
+  return true;
+  }
+
+bool module_check_heap_alert(int verbosity /*=0*/, OvmsWriter* writer /*=NULL*/)
+  {
+  return true;
+  }
+
 #else
 
 enum region_types {

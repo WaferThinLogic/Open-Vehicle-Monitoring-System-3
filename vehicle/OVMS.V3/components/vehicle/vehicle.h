@@ -573,6 +573,7 @@ class OvmsVehicle : public InternalRamAllocated
       OvmsVehicle *m_parent;
     public:
       OvmsVehicleSignal( OvmsVehicle *parent);
+      virtual ~OvmsVehicleSignal() {}
 
       // Signals for vehicle.
 

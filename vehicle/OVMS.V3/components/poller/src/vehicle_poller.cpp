@@ -53,6 +53,11 @@ static const char *TAG_DK = "duktape-poll";
 
 using namespace std::placeholders;
 
+// VehicleSignal base class stub implementations (required for vtable)
+void OvmsPoller::VehicleSignal::IncomingPollReply(const poll_job_t &job, uint8_t* data, uint8_t length) { }
+void OvmsPoller::VehicleSignal::IncomingPollError(const poll_job_t &job, int32_t code) { }
+void OvmsPoller::VehicleSignal::IncomingPollTxCallback(const poll_job_t &job, bool success) { }
+
 OvmsPollers MyPollers __attribute__ ((init_priority (7000)));
 
 // Runtime control for logging:
