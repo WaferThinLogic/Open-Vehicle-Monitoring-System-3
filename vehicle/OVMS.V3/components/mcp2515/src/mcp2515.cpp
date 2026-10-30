@@ -183,7 +183,7 @@ if (m_spibus->m_initialized == false) {
   m_powermode = Off; // Stop an event being raised
   SetPowerMode(Off);
   if (m_hw_present)
-    SetTransceiverMode(CAN_MODE_LISTEN);
+    SetTransceiverMode(CAN_MODE_OFF);
 
   // Register mcp2515 specific commands:
   OvmsCommand* cmd_can = MyCommandApp.RegisterCommand("can", "CAN framework");
@@ -202,7 +202,7 @@ mcp2515::~mcp2515()
   m_cmd_canx->GetParent()->UnregisterCommand(m_cmd_canx->GetName());
   if (m_hw_present)
     {
-    SetTransceiverMode(CAN_MODE_LISTEN);
+    SetTransceiverMode(CAN_MODE_OFF);
     gpio_isr_handler_remove((gpio_num_t)m_intpin);
     }
   spi_bus_remove_device(m_spi);
@@ -440,7 +440,7 @@ esp_err_t mcp2515::Stop()
   m_spibus->spi_cmd(m_spi, buf, 0, 1, CMD_RESET);
   vTaskDelay(50 / portTICK_PERIOD_MS);
 
-  SetTransceiverMode(CAN_MODE_LISTEN);
+  SetTransceiverMode(CAN_MODE_OFF);
 
   // Set SLEEP mode
   ChangeMode(CANCTRL_MODE_SLEEP);
@@ -1076,7 +1076,13 @@ void mcp2515::SetTransceiverMode(CAN_mode_t mode)
     return;
     }
 
-  if ( mode == CAN_MODE_ACTIVE ) 
+#ifdef CONFIG_OVMS_HW_CAN_LISTEN_XCVR_NORMAL
+  // Listen mode is enforced by the controller (LISTEN); keep the transceiver
+  // out of standby so its full-speed receiver stays active
+  if ( mode == CAN_MODE_ACTIVE || mode == CAN_MODE_LISTEN )
+#else
+  if ( mode == CAN_MODE_ACTIVE )
+#endif
     {
       // BFPCTRL RXnBF PIN CONTROL AND STATUS - enable TX driver of SN65 - rd/wr mode
       WriteRegAndVerify(REG_BFPCTRL, 0b00001100);

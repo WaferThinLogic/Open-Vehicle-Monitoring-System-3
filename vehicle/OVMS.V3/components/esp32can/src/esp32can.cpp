@@ -386,7 +386,7 @@ esp32can::esp32can(const char* name, int txpin, int rxpin)
   gpio_set_direction((gpio_num_t)ESP32CAN_PIN_RS,GPIO_MODE_OUTPUT);
 #endif // defined(CONFIG_OVMS_HW_REMAP_GPIO) && defined(ESP32CAN_PIN_RS)
 
-  MyESP32can->SetTransceiverMode(CAN_MODE_LISTEN);
+  MyESP32can->SetTransceiverMode(CAN_MODE_OFF);
 
   // Enter controller reset mode:
   ESP_LOGD(TAG, "Reset mode state on init: %d", MODULE_ESP32CAN->MOD.B.RM);
@@ -584,7 +584,7 @@ esp_err_t esp32can::Stop()
   // Clear TX queue
   xQueueReset(m_txqueue);
 
-  MyESP32can->SetTransceiverMode(CAN_MODE_LISTEN);
+  MyESP32can->SetTransceiverMode(CAN_MODE_OFF);
 
   ESP32CAN_ENTER_CRITICAL();
 
@@ -613,6 +613,11 @@ esp_err_t esp32can::Stop()
 void esp32can::SetTransceiverMode(CAN_mode_t mode)
   {
   int rs_state = (mode == CAN_MODE_ACTIVE) ? 0 : 1;
+#ifdef CONFIG_OVMS_HW_CAN_LISTEN_XCVR_NORMAL
+  // Listen mode is enforced by the controller (LOM); keep the transceiver
+  // out of standby so its full-speed receiver stays active
+  if (mode == CAN_MODE_LISTEN) rs_state = 0;
+#endif
   
 #ifdef CONFIG_OVMS_COMP_MAX7317
   // Enable TX driver of matching SN65 transceiver

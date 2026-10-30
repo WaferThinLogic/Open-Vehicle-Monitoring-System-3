@@ -102,6 +102,13 @@ Peripherals::Peripherals()
   gpio_set_level((gpio_num_t)VSPI_PIN_MCP2515_2_CS, 1); // to prevent SPI crosstalk during initialization
 #endif // #ifdef CONFIG_OVMS_COMP_MCP2515
 
+#if defined(CONFIG_OVMS_COMP_EXTERNAL_SWCAN) && defined(CONFIG_OVMS_HW_DEFAULT_GPIO_MAP)
+  // Deselect an installed but unused SWCAN board's MCP2515, otherwise its floating CS
+  // lets it drive MISO during can2/can3 transfers:
+  gpio_set_direction((gpio_num_t)VSPI_PIN_MCP2515_SWCAN_CS, GPIO_MODE_OUTPUT);
+  gpio_set_level((gpio_num_t)VSPI_PIN_MCP2515_SWCAN_CS, 1); // to prevent SPI crosstalk during initialization
+#endif
+
 #ifdef CONFIG_OVMS_COMP_SDCARD
   gpio_set_direction((gpio_num_t)SDCARD_PIN_CLK, GPIO_MODE_OUTPUT);
   gpio_set_direction((gpio_num_t)SDCARD_PIN_CMD, GPIO_MODE_OUTPUT);

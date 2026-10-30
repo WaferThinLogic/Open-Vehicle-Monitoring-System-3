@@ -63,6 +63,20 @@ config OVMS_GPIO_MAP_FILE
     help
         The GPIO mapping will be included in ovms_peripheral from the selected file 
 
+config OVMS_HW_CAN_LISTEN_XCVR_NORMAL
+    bool "Keep CAN transceivers in normal mode while in listen mode"
+    default n
+    depends on OVMS
+    help
+        By default, listen mode disables the transceiver's TX driver via its
+        RS/STBY pin. On SN65HVD23x (original OVMS hardware) this only disables
+        the transmitter, but on MCP2561/TJA104x style transceivers the same pin
+        selects standby, leaving only a slow wake-up receiver active, which
+        corrupts reception at normal bit rates.
+        Enable this to keep the transceiver in normal mode in listen mode.
+        Bus silence is then guaranteed by the CAN controller's own hardware
+        listen-only mode (ESP32 LOM / MCP2515 LISTEN).
+
 config OVMS_HW_SPIMEM_AGGRESSIVE
     bool "Aggressively use SPI RAM (rather than internal RAM)"
     default y
